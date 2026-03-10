@@ -116,11 +116,14 @@ class RRTPathfinder:
         new_lon = from_node.lon + ratio * (to_node.lon - from_node.lon)
         return RRTNode(new_lat, new_lon, to_node.alt)
 
-    def _reconstruct_path(self, goal_node: RRTNode) -> List[Tuple[float, float]]:
-        path: List[Tuple[float, float]] = []
+    def _reconstruct_path(self, goal_node: RRTNode, include_alt: bool = False) -> List[Tuple[float, ...]]:
+        path: List[Tuple[float, ...]] = []
         cur: Optional[RRTNode] = goal_node
         while cur is not None:
-            path.append((cur.lat, cur.lon))
+            if include_alt:
+                path.append((cur.lat, cur.lon, cur.alt))
+            else:
+                path.append((cur.lat, cur.lon))
             cur = cur.parent
         return path[::-1]
 
@@ -132,10 +135,14 @@ class RRTPathfinder:
         safety_margin_km: float,
         goal_bias: float = 0.1,
         goal_reach_km: float = 5.0,
-    ) -> List[Tuple[float, float]]:
-        """RRT 경로탐색"""
-        start_node = RRTNode(start[0], start[1])
-        goal_node = RRTNode(end[0], end[1])
+        fuel_state: float = 1.0,
+        refuel_count: int = 0,
+    ) -> List[Tuple[float, ...]]:
+        """RRT 경로탐색 (2D/3D 모두 지원 — 고도값이 있으면 그대로 출력에 포함)"""
+        start_alt = float(start[2]) if len(start) >= 3 else 0.0
+        end_alt   = float(end[2])   if len(end)   >= 3 else 0.0
+        start_node = RRTNode(start[0], start[1], start_alt)
+        goal_node  = RRTNode(end[0],   end[1],   end_alt)
 
         if self.is_collision(start_node, threats, safety_margin_km):
             print("⚠️ 시작점이 위험영역 내부입니다.")
@@ -144,6 +151,7 @@ class RRTPathfinder:
             print("⚠️ 목표점이 위험영역 내부입니다.")
             return []
 
+        include_alt = (start_alt != 0.0 or end_alt != 0.0)
         tree = [start_node]
 
         for i in range(self.max_iterations):
@@ -152,6 +160,13 @@ class RRTPathfinder:
             nearest = self.get_nearest_node(tree, rand_node)
 
             new_node = self.steer(nearest, rand_node)
+
+            # 고도 선형보간: 트리 깊이에 비례해서 start_alt→end_alt 보간
+            if include_alt:
+                total_dist = self.distance(start_node, goal_node) or 1.0
+                traveled   = self.distance(start_node, new_node)
+                t = min(traveled / total_dist, 1.0)
+                new_node.alt = start_alt + t * (end_alt - start_alt)
 
             if self.is_collision(new_node, threats, safety_margin_km):
                 continue
@@ -164,12 +179,11 @@ class RRTPathfinder:
             # 목표 도달 체크 (distance()는 km)
             if self.distance(new_node, goal_node) < goal_reach_km:
                 if self.is_path_clear(new_node, goal_node, threats, safety_margin_km):
-                    # goal_node도 트리에 넣되, 이미 tree에 섞이지 않도록 여기서만 parent 설정
                     goal_attach = RRTNode(goal_node.lat, goal_node.lon, goal_node.alt)
                     goal_attach.parent = new_node
                     tree.append(goal_attach)
 
-                    path = self._reconstruct_path(goal_attach)
+                    path = self._reconstruct_path(goal_attach, include_alt=include_alt)
                     print(f"✅ RRT 성공: {i+1}회 반복, 경로 길이 {len(path)}")
                     return path
 
@@ -197,11 +211,17 @@ class RRTStarPathfinder(RRTPathfinder):
         safety_margin_km: float,
         goal_bias: float = 0.1,
         goal_reach_km: float = 5.0,
-    ) -> List[Tuple[float, float]]:
-        """RRT* 경로탐색"""
-        start_node = RRTNode(start[0], start[1])
+        fuel_state: float = 1.0,
+        refuel_count: int = 0,
+    ) -> List[Tuple[float, ...]]:
+        """RRT* 경로탐색 (2D/3D 모두 지원)"""
+        start_alt = float(start[2]) if len(start) >= 3 else 0.0
+        end_alt   = float(end[2])   if len(end)   >= 3 else 0.0
+        include_alt = (start_alt != 0.0 or end_alt != 0.0)
+
+        start_node = RRTNode(start[0], start[1], start_alt)
         start_node.cost = 0.0
-        goal_node = RRTNode(end[0], end[1])
+        goal_node = RRTNode(end[0], end[1], end_alt)
 
         if self.is_collision(start_node, threats, safety_margin_km):
             print("⚠️ 시작점이 위험영역 내부입니다.")
@@ -217,6 +237,13 @@ class RRTStarPathfinder(RRTPathfinder):
             nearest = self.get_nearest_node(tree, rand_node)
             new_node = self.steer(nearest, rand_node)
 
+            # 고도 선형보간
+            if include_alt:
+                total_dist = self.distance(start_node, goal_node) or 1.0
+                traveled   = self.distance(start_node, new_node)
+                t = min(traveled / total_dist, 1.0)
+                new_node.alt = start_alt + t * (end_alt - start_alt)
+
             if self.is_collision(new_node, threats, safety_margin_km):
                 continue
             if not self.is_path_clear(nearest, new_node, threats, safety_margin_km):
@@ -225,7 +252,7 @@ class RRTStarPathfinder(RRTPathfinder):
             # 주변 노드 탐색
             nearby = self.get_nearby_nodes(tree, new_node)
 
-            # 최소 비용 부모 선택(choose parent) - RRT* 핵심 [web:22]
+            # 최소 비용 부모 선택(choose parent) - RRT* 핵심
             best_parent = nearest
             best_cost = nearest.cost + self.distance(nearest, new_node)
 
@@ -239,7 +266,7 @@ class RRTStarPathfinder(RRTPathfinder):
             new_node.cost = best_cost
             tree.append(new_node)
 
-            # Rewiring: 주변 노드들을 new_node를 통해 더 싸게 갈 수 있으면 부모 변경 [web:22]
+            # Rewiring
             for near in nearby:
                 new_cost = new_node.cost + self.distance(new_node, near)
                 if new_cost < near.cost and self.is_path_clear(new_node, near, threats, safety_margin_km):
@@ -254,7 +281,7 @@ class RRTStarPathfinder(RRTPathfinder):
                     goal_attach.cost = new_node.cost + self.distance(new_node, goal_attach)
                     tree.append(goal_attach)
 
-                    path = self._reconstruct_path(goal_attach)
+                    path = self._reconstruct_path(goal_attach, include_alt=include_alt)
                     print(
                         f"✅ RRT* 성공: {i+1}회 반복, 경로 길이 {len(path)}, 비용 {goal_attach.cost:.2f}"
                     )

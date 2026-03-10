@@ -237,7 +237,7 @@ with col_left:
             endu_factor = fuel_endurance_factor(p.fuel_state, p.refuel_count)
             st.caption(f"F-16 effective range budget: {est_range:.0f} km (endurance x{endu_factor:.2f})")
             if p.enable_3d and p.algorithm in ("RRT", "RRT*"):
-                st.caption("⚠️ RRT/RRT*는 현재 3D 완전지원이 아니어서 계산 시 A* 3D로 자동 대체됩니다.")
+                st.caption("ℹ️ 3D 모드에서 RRT/RRT*는 고도 선형보간 방식으로 동작합니다.")
 
             if st.button("🔄 설정 적용 및 경로 계산", type="primary", use_container_width=True):
                 st.rerun()
@@ -877,9 +877,6 @@ with col_left:
 # ===== 경로 계산 =====
 with col_right:
     effective_algorithm = mission.params.algorithm
-    if mission.params.enable_3d and mission.params.algorithm in ("RRT", "RRT*"):
-        effective_algorithm = "A* 3D"
-        st.warning("3D 모드에서 RRT/RRT*는 완전 지원되지 않아 A* 3D로 대체 계산합니다.")
     st.subheader(f"🗺️ 전술 지도 ({effective_algorithm})")
 
     # 알고리즘 설정
@@ -889,9 +886,9 @@ with col_right:
     elif effective_algorithm == "A*":
         pathfinder = AStarPathfinder()
     elif effective_algorithm == "RRT":
-        pathfinder = RRTPathfinder(max_iterations=2000)
+        pathfinder = RRTPathfinder(max_iterations=3000)
     elif effective_algorithm == "RRT*":
-        pathfinder = RRTStarPathfinder(max_iterations=2000)
+        pathfinder = RRTStarPathfinder(max_iterations=3000)
 
     # 좌표 설정
     start_coord = AIRPORTS[mission.params.start]["coords"]
@@ -966,19 +963,18 @@ with col_right:
                         a_start, a_target, threats_dict, mission.params.margin,
                         fuel_state=fuel_state, refuel_count=refuel_count
                     )
-                elif hasattr(pathfinder, 'find_path_3d') and mission.params.enable_3d:
-                    raw = pathfinder.find_path_3d(
+                elif effective_algorithm in ("RRT", "RRT*"):
+                    raw = pathfinder.find_path(
                         a_start, a_target, threats_dict, mission.params.margin,
                         fuel_state=fuel_state, refuel_count=refuel_count
                     )
+                elif effective_algorithm == "A*":
+                    raw = pathfinder.find_path(
+                        a_start[:2], a_target[:2], threats_dict, mission.params.margin,
+                        fuel_state=fuel_state, refuel_count=refuel_count
+                    )
                 else:
-                    if effective_algorithm == "A*":
-                        raw = pathfinder.find_path(
-                            a_start[:2], a_target[:2], threats_dict, mission.params.margin,
-                            fuel_state=fuel_state, refuel_count=refuel_count
-                        )
-                    else:
-                        raw = pathfinder.find_path(a_start[:2], a_target[:2], threats_dict, mission.params.margin)
+                    raw = pathfinder.find_path(a_start[:2], a_target[:2], threats_dict, mission.params.margin)
                 path_in = smooth_path_3d(raw) if (raw and len(raw[0]) == 3) else smooth_path(raw)
             except Exception as e:
                 st.warning(f"⚠️ {asset.callsign} 경로 탐색 오류: {e}")
@@ -994,19 +990,18 @@ with col_right:
                             eg_start, eg_end, threats_dict, mission.params.margin,
                             fuel_state=fuel_state, refuel_count=refuel_count
                         )
-                    elif hasattr(pathfinder, 'find_path_3d') and mission.params.enable_3d:
-                        raw_o = pathfinder.find_path_3d(
+                    elif effective_algorithm in ("RRT", "RRT*"):
+                        raw_o = pathfinder.find_path(
                             eg_start, eg_end, threats_dict, mission.params.margin,
                             fuel_state=fuel_state, refuel_count=refuel_count
                         )
+                    elif effective_algorithm == "A*":
+                        raw_o = pathfinder.find_path(
+                            eg_start[:2], eg_end[:2], threats_dict, mission.params.margin,
+                            fuel_state=fuel_state, refuel_count=refuel_count
+                        )
                     else:
-                        if effective_algorithm == "A*":
-                            raw_o = pathfinder.find_path(
-                                eg_start[:2], eg_end[:2], threats_dict, mission.params.margin,
-                                fuel_state=fuel_state, refuel_count=refuel_count
-                            )
-                        else:
-                            raw_o = pathfinder.find_path(eg_start[:2], eg_end[:2], threats_dict, mission.params.margin)
+                        raw_o = pathfinder.find_path(eg_start[:2], eg_end[:2], threats_dict, mission.params.margin)
                     path_out = smooth_path_3d(raw_o) if (raw_o and len(raw_o[0]) == 3) else smooth_path(raw_o)
                 except Exception as e2:
                     st.warning(f"⚠️ {asset.callsign} 복귀 경로 오류: {e2}")
@@ -1041,19 +1036,18 @@ with col_right:
                     start_coord, target_coord, threats_dict, mission.params.margin,
                     fuel_state=fuel_state, refuel_count=refuel_count
                 )
-            elif hasattr(pathfinder, 'find_path_3d') and mission.params.enable_3d:
-                raw_in = pathfinder.find_path_3d(
+            elif effective_algorithm in ("RRT", "RRT*"):
+                raw_in = pathfinder.find_path(
                     start_coord, target_coord, threats_dict, mission.params.margin,
                     fuel_state=fuel_state, refuel_count=refuel_count
                 )
+            elif effective_algorithm == "A*":
+                raw_in = pathfinder.find_path(
+                    start_coord[:2], target_coord[:2], threats_dict, mission.params.margin,
+                    fuel_state=fuel_state, refuel_count=refuel_count
+                )
             else:
-                if effective_algorithm == "A*":
-                    raw_in = pathfinder.find_path(
-                        start_coord[:2], target_coord[:2], threats_dict, mission.params.margin,
-                        fuel_state=fuel_state, refuel_count=refuel_count
-                    )
-                else:
-                    raw_in = pathfinder.find_path(start_coord[:2], target_coord[:2], threats_dict, mission.params.margin)
+                raw_in = pathfinder.find_path(start_coord[:2], target_coord[:2], threats_dict, mission.params.margin)
         except Exception as e:
             st.warning(f"⚠️ 단일 경로 탐색 오류: {e}")
             raw_in = []
@@ -1068,19 +1062,18 @@ with col_right:
                         eg_s, eg_e, threats_dict, mission.params.margin,
                         fuel_state=fuel_state, refuel_count=refuel_count
                     )
-                elif hasattr(pathfinder, 'find_path_3d') and mission.params.enable_3d:
-                    raw_out = pathfinder.find_path_3d(
+                elif effective_algorithm in ("RRT", "RRT*"):
+                    raw_out = pathfinder.find_path(
                         eg_s, eg_e, threats_dict, mission.params.margin,
                         fuel_state=fuel_state, refuel_count=refuel_count
                     )
+                elif effective_algorithm == "A*":
+                    raw_out = pathfinder.find_path(
+                        eg_s[:2], eg_e[:2], threats_dict, mission.params.margin,
+                        fuel_state=fuel_state, refuel_count=refuel_count
+                    )
                 else:
-                    if effective_algorithm == "A*":
-                        raw_out = pathfinder.find_path(
-                            eg_s[:2], eg_e[:2], threats_dict, mission.params.margin,
-                            fuel_state=fuel_state, refuel_count=refuel_count
-                        )
-                    else:
-                        raw_out = pathfinder.find_path(eg_s[:2], eg_e[:2], threats_dict, mission.params.margin)
+                    raw_out = pathfinder.find_path(eg_s[:2], eg_e[:2], threats_dict, mission.params.margin)
             except Exception as e3:
                 st.warning(f"⚠️ 복귀 경로 오류: {e3}")
                 raw_out = []
